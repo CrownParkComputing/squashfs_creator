@@ -11,6 +11,7 @@ import '../models/settings.dart';
 import '../services/theme_manager.dart';
 import '../models/game_folder.dart';
 import 'dart:convert';
+import 'package:logging/logging.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -28,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final WineService _wineService = WineService();
   static const String _gameFoldersKey = 'game_folders';
   List<GameFolder> _gameFolders = [];
+  final _logger = Logger('SettingsScreen');
 
   @override
   void initState() {

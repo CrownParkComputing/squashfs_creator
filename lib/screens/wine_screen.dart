@@ -4,6 +4,9 @@ import '../services/wine_service.dart';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
+import 'package:logging/logging.dart';
+import 'package:wine_app/widgets/dll_override_manager.dart';
+// Make sure this is correct
 
 class WineScreen extends StatefulWidget {
   const WineScreen({super.key});
@@ -218,8 +221,8 @@ class _WineScreenState extends State<WineScreen> {
             child: const Text('DXVK (Vulkan for DX9/10/11)'),
           ),
           SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'vkd3d'),
-            child: const Text('VKD3D (Vulkan for DX12)'),
+            onPressed: () => Navigator.pop(context, 'vkd3d-proton'),
+            child: const Text('VKD3D-Proton (Vulkan for DX12)'),
           ),
           const Divider(),
           
@@ -268,7 +271,7 @@ class _WineScreenState extends State<WineScreen> {
         String v when v.startsWith('vcrun') => 'Visual C++',
         String v when v.startsWith('d3d') => 'DirectX',
         'dxvk' => 'DXVK',
-        'vkd3d' => 'VKD3D',
+        'vkd3d-proton' => 'VKD3D-Proton',
         'xact' => 'XACT',
         'xinput' => 'XInput',
         String v when v.startsWith('dotnet') => '.NET Framework',
@@ -284,7 +287,7 @@ class _WineScreenState extends State<WineScreen> {
       builder: (context) => SimpleDialog(
         title: const Text('Select Wine Version'),
         children: [
-          for (final category in WineService.AVAILABLE_VERSIONS.entries)
+          for (final category in WineService.availableVersions.entries)
             ExpansionTile(
               title: Text(category.key),
               children: [

@@ -12,8 +12,8 @@ class GameConfig {
     Map<String, String>? environment,
     DateTime? lastPlayed,
   }) : 
-    this.environment = environment ?? {},
-    this.lastPlayed = lastPlayed ?? DateTime.now();
+    environment = environment ?? {},
+    lastPlayed = lastPlayed ?? DateTime.now();
 
   bool get isConfigured => exePath != null && prefixPath != null;
 

@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/game_config.dart';
+import 'package:logging/logging.dart';
 
 class GameConfigService {
+  final _logger = Logger('GameConfigService');
   static const String _configKey = 'game_configs';
 
   Future<List<GameConfig>> loadConfigs() async {
@@ -24,6 +26,7 @@ class GameConfigService {
   }
 
   Future<void> saveConfig(GameConfig config) async {
+    _logger.info('Saving config for: ${config.squashPath}');
     final prefs = await SharedPreferences.getInstance();
     final configs = await loadConfigs();
     
@@ -39,6 +42,7 @@ class GameConfigService {
   }
 
   Future<void> removeConfig(String squashPath) async {
+    _logger.info('Removing config for: $squashPath');
     final prefs = await SharedPreferences.getInstance();
     final configs = await loadConfigs();
     

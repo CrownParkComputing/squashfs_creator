@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../widgets/main_drawer.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
@@ -16,7 +15,7 @@ class WelcomeScreen extends StatelessWidget {
           },
         ),
       ),
-      drawer: const MainDrawer(),
+      drawer: const Drawer(),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

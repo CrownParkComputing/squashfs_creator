@@ -4,8 +4,16 @@ import 'screens/wine_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/theme_manager.dart';
 import 'package:provider/provider.dart';
+import 'package:logging/logging.dart';
 
 void main() {
+  // Set up logging
+  Logger.root.level = Level.ALL;
+  Logger.root.onRecord.listen((record) {
+    // ignore: avoid_print
+    print('${record.level.name}: ${record.time}: ${record.message}');
+  });
+
   runApp(
     ChangeNotifierProvider(
       create: (_) => ThemeManager(),

@@ -2,9 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/wine_service.dart';
 import '../models/wine_prefix.dart';
-import '../widgets/main_drawer.dart';
 import 'package:path/path.dart' as path;
-import '../widgets/dependency_manager_widget.dart';
+import 'package:logging/logging.dart';
 
 class WineManagerScreen extends StatefulWidget {
   const WineManagerScreen({super.key});
@@ -14,17 +13,19 @@ class WineManagerScreen extends StatefulWidget {
 }
 
 class _WineManagerScreenState extends State<WineManagerScreen> {
-  final WineService _wineService = WineService(
-    logCallback: (msg) => print(msg),
-  );
+  final _logger = Logger('WineManagerScreen');
+  late final WineService _wineService;
   List<WinePrefix> _prefixes = [];
   bool _isDownloading = false;
   String _selectedVersion = '';
-  List<String> _logs = [];
+  final List<String> _logs = [];
 
   @override
   void initState() {
     super.initState();
+    _wineService = WineService(
+      logCallback: (msg) => _logger.info(msg),
+    );
     _loadPrefixes();
   }
 
@@ -44,7 +45,7 @@ class _WineManagerScreenState extends State<WineManagerScreen> {
       builder: (context) => SimpleDialog(
         title: const Text('Select Wine Version'),
         children: [
-          for (final category in WineService.AVAILABLE_VERSIONS.entries)
+          for (final category in WineService.availableVersions.entries)
             ExpansionTile(
               title: Text(category.key),
               children: [
@@ -96,7 +97,7 @@ class _WineManagerScreenState extends State<WineManagerScreen> {
           ),
         ],
       ),
-      drawer: const MainDrawer(),
+      drawer: const Drawer(), // Changed MainDrawer to Drawer since MainDrawer isn't defined
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -178,8 +179,8 @@ class _WineManagerScreenState extends State<WineManagerScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _isDownloading ? null : _downloadAndSetupPrefix,
-        child: const Icon(Icons.add),
         tooltip: 'Add Wine Prefix',
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -225,5 +226,90 @@ class _WineManagerScreenState extends State<WineManagerScreen> {
         SnackBar(content: Text('Error: $e')),
       );
     }
+  }
+}
+
+class DependencyManagerWidget extends StatefulWidget {
+  final WinePrefix prefix;
+
+  const DependencyManagerWidget({
+    super.key,
+    required this.prefix,
+  });
+
+  @override
+  State<DependencyManagerWidget> createState() => _DependencyManagerWidgetState();
+}
+
+class _DependencyManagerWidgetState extends State<DependencyManagerWidget> {
+  final WineService _wineService = WineService();
+  bool _isInstalling = false;
+  String _status = '';
+
+  Future<void> _installDependency(String dep) async {
+    if (_isInstalling) return;
+
+    setState(() {
+      _isInstalling = true;
+      _status = 'Installing $dep...';
+    });
+
+    try {
+      await _wineService.installDependencies(widget.prefix, [dep]);
+      setState(() => _status = '$dep installed successfully!');
+    } catch (e) {
+      setState(() => _status = 'Error installing $dep: $e');
+    } finally {
+      setState(() => _isInstalling = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Common Dependencies',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ElevatedButton(
+              onPressed: _isInstalling ? null : () => _installDependency('vcrun2019'),
+              child: const Text('Visual C++ 2019'),
+            ),
+            ElevatedButton(
+              onPressed: _isInstalling ? null : () => _installDependency('dxvk'),
+              child: const Text('DXVK'),
+            ),
+            ElevatedButton(
+              onPressed: _isInstalling ? null : () => _installDependency('vkd3d-proton'),
+              child: const Text('VKD3D-Proton'),
+            ),
+            ElevatedButton(
+              onPressed: _isInstalling ? null : () => _installDependency('d3dx9'),
+              child: const Text('DirectX 9'),
+            ),
+            ElevatedButton(
+              onPressed: _isInstalling ? null : () => _installDependency('xact'),
+              child: const Text('XACT'),
+            ),
+          ],
+        ),
+        if (_isInstalling) ...[
+          const SizedBox(height: 16),
+          const LinearProgressIndicator(),
+        ],
+        if (_status.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(_status),
+        ],
+      ],
+    );
   }
 } 

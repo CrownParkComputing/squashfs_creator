@@ -1,14 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:path/path.dart' as path;
 import '../models/squash_file_settings.dart';
 import '../services/wine_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:logging/logging.dart';
 
 class SquashManager {
   final WineService _wineService = WineService();
   static const String _settingsKey = 'squash_settings';
-  Map<String, Process> _mountProcesses = {};
+  final Map<String, Process> _mountProcesses = {};
+  final _logger = Logger('SquashManager');
 
   Future<String> mountSquashFS(String squashPath) async {
     try {
@@ -25,14 +26,14 @@ class SquashManager {
       }
 
       final mountPoint = '$homeDir/.local/share/squashfs_${DateTime.now().millisecondsSinceEpoch}';
-      print('Creating mount point at: $mountPoint');
+      _logger.info('Creating mount point at: $mountPoint');
 
       // Create mount directory
       final mountDir = Directory(mountPoint);
       await mountDir.create(recursive: true);
 
       // Start squashfuse process and keep it running
-      print('Starting squashfuse for: $squashPath');
+      _logger.info('Starting squashfuse for: $squashPath');
       final process = await Process.start('squashfuse', [
         squashPath,
         mountPoint
@@ -51,23 +52,23 @@ class SquashManager {
 
       final contents = await Directory(mountPoint).list().toList();
       if (contents.isEmpty) {
-        print('Mount point is empty after mounting');
+        _logger.warning('Mount point is empty after mounting');
         await unmountSquashFS(mountPoint);
         throw Exception('Mount verification failed - directory is empty');
       }
 
-      print('Mount successful at: $mountPoint');
+      _logger.info('Mount successful at: $mountPoint');
       return mountPoint;
 
     } catch (e) {
-      print('Error in mountSquashFS: $e');
+      _logger.severe('Error in mountSquashFS: $e');
       rethrow;
     }
   }
 
   Future<void> unmountSquashFS(String mountPoint) async {
     try {
-      print('Unmounting $mountPoint');
+      _logger.info('Unmounting $mountPoint');
       
       // Kill the squashfuse process if it exists
       final process = _mountProcesses.remove(mountPoint);
@@ -81,9 +82,9 @@ class SquashManager {
 
       // Remove mount point
       await Directory(mountPoint).delete(recursive: true);
-      print('Unmount complete');
+      _logger.info('Unmount complete');
     } catch (e) {
-      print('Error in unmountSquashFS: $e');
+      _logger.severe('Error in unmountSquashFS: $e');
       rethrow;
     }
   }
@@ -100,7 +101,7 @@ class SquashManager {
         prefix,
       );
     } catch (e) {
-      print('Error launching squashfs game: $e');
+      _logger.severe('Error launching squashfs game: $e');
       rethrow;
     }
   }
@@ -165,26 +166,25 @@ class SquashManager {
   Future<bool> testMount(String squashPath) async {
     String? mountPoint;
     try {
-      print('\n=== Testing mount of: $squashPath ===');
+      _logger.info('=== Testing mount of: $squashPath ===');
       mountPoint = await mountSquashFS(squashPath);
       
       // List contents
       final lsResult = await Process.run('ls', ['-la', mountPoint]);
-      print('Mount contents:\n${lsResult.stdout}');
+      _logger.info('Mount contents:\n${lsResult.stdout}');
       
       return lsResult.exitCode == 0;
     } catch (e) {
-      print('Mount test failed: $e');
+      _logger.severe('Mount test failed: $e');
       return false;
     } finally {
       if (mountPoint != null) {
         await unmountSquashFS(mountPoint);
       }
-      print('=== Mount test complete ===\n');
+      _logger.info('=== Mount test complete ===');
     }
   }
 
-  @override
   void dispose() {
     // Clean up any remaining mount processes
     for (final process in _mountProcesses.values) {

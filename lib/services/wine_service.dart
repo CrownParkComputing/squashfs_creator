@@ -5,34 +5,24 @@ import '../models/wine_prefix.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/game_prefix_association.dart';
 import '../models/wine_build.dart';
+import '../utils/process_manager.dart';
+import 'package:logging/logging.dart';
+import 'package:http/http.dart' as http;
+
+final _logger = Logger('WineService');
 
 class WineService {
-  static const Map<String, Map<String, String>> AVAILABLE_VERSIONS = {
+  static const Map<String, Map<String, String>> availableVersions = {
     'GE-Proton': {
       'GE-Proton9-23': 'GE-Proton9-23.tar.gz',  // Latest GE-Proton release
     },
-    'Wine': {
-      // Regular Wine 10.0 builds
-      'wine-10.0-amd64': 'wine-10.0-amd64.tar.xz',
-      'wine-10.0-amd64-wow64': 'wine-10.0-amd64-wow64.tar.xz',
-      
-      // Staging builds
-      'wine-10.0-staging-amd64': 'wine-10.0-staging-amd64.tar.xz',
-      'wine-10.0-staging-amd64-wow64': 'wine-10.0-staging-amd64-wow64.tar.xz',
-      
-      // TKG builds
-      'wine-10.0-staging-tkg-amd64': 'wine-10.0-staging-tkg-amd64.tar.xz',
-      'wine-10.0-staging-tkg-amd64-wow64': 'wine-10.0-staging-tkg-amd64-wow64.tar.xz',
-    },
   };
 
-  // Add these constants for dependency URLs
-  static const Map<String, String> DEPENDENCY_URLS = {
+  static const Map<String, String> dependencyUrls = {
     'vcredist_2022': 'https://aka.ms/vs/17/release/vc_redist.x64.exe',
     'vcredist_2019': 'https://aka.ms/vs/16/release/vc_redist.x64.exe',
     'vcredist_2017': 'https://download.microsoft.com/download/2/B/C/2BC2E7B3-3B11-4C8C-BBC4-F7C92666E1DF/vc_redist.x64.exe',
     'vcredist_2015': 'https://download.microsoft.com/download/6/A/A/6AA4EDFF-645B-48C5-81CC-ED5963AEAD48/vc_redist.x64.exe',
-    'directx_runtime': 'https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe',
     'dxvk': 'https://github.com/doitsujin/dxvk/releases/download/v2.3.1/dxvk-2.3.1.tar.gz',
     'vkd3d': 'https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.11/vkd3d-proton-2.11.tar.zst',
   };
@@ -61,6 +51,7 @@ class WineService {
       }
 
       final downloadPath = path.join(downloadDir.path, version);
+      final prefixDir = Directory(path.join(await baseDir, version));
       
       // Get download URL based on version
       final url = _getDownloadUrl(version);
@@ -83,102 +74,83 @@ class WineService {
       // Cleanup download
       await file.delete();
 
+      onLog('Prefix setup complete!');
+
+      // Create WinePrefix object with the correct path
+      final prefix = WinePrefix(
+        path: path.join(prefixDir.path, 'pfx'),
+        version: version,
+        created: DateTime.now(),
+        is64Bit: true,
+      );
+
+      // Install essential dependencies
+      onLog('Installing essential dependencies...');
+      await installEssentialDependencies(prefix);
+      
+      onLog('Prefix setup and dependencies installation complete!');
+
     } catch (e) {
-      onLog('Error: $e');
+      onLog('Error during setup: $e');
       rethrow;
     }
   }
 
   String _getDownloadUrl(String version) {
-    if (version.startsWith('GE-Proton')) {
-      // GE-Proton releases from GloriousEggroll's repo
-      return 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$version/$version.tar.gz';
-    }
-    
-    // For Kron4ek's Wine builds, the URL structure is:
-    // https://github.com/Kron4ek/Wine-Builds/releases/download/10.0/wine-10.0-amd64.tar.xz
-    return 'https://github.com/Kron4ek/Wine-Builds/releases/download/10.0/$version.tar.xz';
+    // Only handle GE-Proton releases
+    return 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$version/$version.tar.gz';
   }
 
   Future<void> _extractAndSetupPrefix(String archivePath, String version) async {
     try {
       final prefixDir = Directory(path.join(await baseDir, version));
-      if (!await prefixDir.exists()) {
-        await prefixDir.create(recursive: true);
+      
+      // Clean up existing prefix if it exists
+      if (await prefixDir.exists()) {
+        onLog('Cleaning up existing prefix...');
+        if (!await ProcessManager.cleanupPrefix(prefixDir.path)) {
+          throw Exception('Failed to clean up existing prefix');
+        }
       }
 
+      // Create fresh directory
+      await prefixDir.create(recursive: true);
+
       onLog('Extracting archive...');
-      if (version.startsWith('GE-Proton')) {
-        // GE-Proton extraction
-        await Process.run('tar', ['xzf', archivePath, '-C', prefixDir.path]);
-        
-        // Create the prefix directory
-        final pfxDir = Directory(path.join(prefixDir.path, 'pfx'));
-        if (!await pfxDir.exists()) {
-          await pfxDir.create(recursive: true);
-        }
+      await Process.run('tar', ['xzf', archivePath, '-C', prefixDir.path]);
+      
+      // Create the prefix directory
+      final pfxDir = Directory(path.join(prefixDir.path, 'pfx'));
+      if (!await pfxDir.exists()) {
+        await pfxDir.create(recursive: true);
+      }
 
-        // Initialize the prefix using Proton's Python script
-        onLog('Initializing prefix...');
-        final protonPath = path.join(prefixDir.path, version, 'proton');
-        
-        if (!await File(protonPath).exists()) {
-          throw Exception('Proton script not found at: $protonPath');
-        }
+      // Initialize the prefix using Proton's Python script
+      onLog('Initializing prefix...');
+      final protonPath = path.join(prefixDir.path, version, 'proton');
+      
+      if (!await File(protonPath).exists()) {
+        throw Exception('Proton script not found at: $protonPath');
+      }
 
-        final result = await Process.run(
-          'python3',
-          [protonPath, 'run', 'wineboot', '--init'],
-          environment: {
-            'STEAM_COMPAT_CLIENT_INSTALL_PATH': prefixDir.path,
-            'STEAM_COMPAT_DATA_PATH': pfxDir.path,
-            'WINEPREFIX': pfxDir.path,
-            'WINEARCH': 'win64',
-            'DXVK_ASYNC': '1',
-            'PROTON_NO_ESYNC': '0',
-            'PROTON_NO_FSYNC': '0',
-            'PROTON_HIDE_NVIDIA_GPU': '0',
-            'PROTON_ENABLE_NVAPI': '1',
-          },
-        );
+      final result = await Process.run(
+        'python3',
+        [protonPath, 'run', 'wineboot', '--init'],
+        environment: {
+          'STEAM_COMPAT_CLIENT_INSTALL_PATH': prefixDir.path,
+          'STEAM_COMPAT_DATA_PATH': pfxDir.path,
+          'WINEPREFIX': pfxDir.path,
+          'WINEARCH': 'win64',
+          'DXVK_ASYNC': '1',
+          'PROTON_NO_ESYNC': '0',
+          'PROTON_NO_FSYNC': '0',
+          'PROTON_HIDE_NVIDIA_GPU': '0',
+          'PROTON_ENABLE_NVAPI': '1',
+        },
+      );
 
-        if (result.exitCode != 0) {
-          throw Exception('Failed to initialize prefix: ${result.stderr}');
-        }
-
-      } else {
-        // Regular Wine extraction
-        await Process.run('tar', ['xJf', archivePath, '-C', prefixDir.path]);
-        
-        // Move files from nested directory if needed
-        final extractedDir = Directory(path.join(prefixDir.path, version.replaceAll('.tar.xz', '')));
-        if (await extractedDir.exists()) {
-          await for (final entity in extractedDir.list()) {
-            final newPath = path.join(prefixDir.path, path.basename(entity.path));
-            await entity.rename(newPath);
-          }
-          await extractedDir.delete();
-        }
-
-        // Initialize the prefix
-        onLog('Initializing prefix...');
-        final wine64Path = path.join(prefixDir.path, 'bin', 'wine64');
-        if (!await File(wine64Path).exists()) {
-          throw Exception('Wine64 binary not found at: $wine64Path');
-        }
-
-        final result = await Process.run(
-          wine64Path,
-          ['wineboot', '--init'],
-          environment: {
-            'WINEPREFIX': path.join(prefixDir.path, 'pfx'),
-            'WINEARCH': 'win64',
-          },
-        );
-
-        if (result.exitCode != 0) {
-          throw Exception('Failed to initialize prefix: ${result.stderr}');
-        }
+      if (result.exitCode != 0) {
+        throw Exception('Failed to initialize prefix: ${result.stderr}');
       }
 
       onLog('Prefix setup complete!');
@@ -188,22 +160,45 @@ class WineService {
     }
   }
 
-  Future<void> launchExe(
-    String exePath,
-    WinePrefix prefix, {
-    Map<String, String>? environment,
-  }) async {
-    try {
-      onLog('Launching ${path.basename(exePath)} with ${prefix.version}...');
-      
-      if (prefix.version.startsWith('GE-Proton')) {
-        await _launchWithProton(exePath, prefix, environment: environment);
-      } else {
-        await _launchWithWine(exePath, prefix, environment: environment);
-      }
-    } catch (e) {
-      onLog('Error launching exe: $e');
-      rethrow;
+  Future<Process> launchExe(String exePath, WinePrefix prefix, {Map<String, String>? environment}) async {
+    final baseEnv = {
+      'WINEPREFIX': prefix.path,
+      'WINEARCH': prefix.is64Bit ? 'win64' : 'win32',
+      // VKD3D settings
+      'VKD3D_CONFIG': 'dxr',
+      'VKD3D_FEATURE_LEVEL': '12_1',
+      'VKD3D_SHADER_CACHE': '1',
+      'VKD3D_DEBUG': 'warn',
+      // DXVK settings
+      'DXVK_ASYNC': '1',
+      'DXVK_STATE_CACHE': '1',
+      // General settings
+      'WINE_LARGE_ADDRESS_AWARE': '1',
+      'STAGING_SHARED_MEMORY': '1',
+      ...?environment,
+    };
+
+    if (prefix.isProton) {
+      baseEnv.addAll({
+        'STEAM_COMPAT_CLIENT_INSTALL_PATH': prefix.protonDir,
+        'STEAM_COMPAT_DATA_PATH': prefix.path,
+        'PROTON_ENABLE_NVAPI': '1',
+        'PROTON_HIDE_NVIDIA_GPU': '0',
+      });
+
+      return Process.start(
+        'python3',
+        [prefix.winePath, 'run', exePath],
+        environment: baseEnv,
+        workingDirectory: path.dirname(exePath),
+      );
+    } else {
+      return Process.start(
+        prefix.winePath,
+        [exePath],
+        environment: baseEnv,
+        workingDirectory: path.dirname(exePath),
+      );
     }
   }
 
@@ -260,41 +255,90 @@ class WineService {
     WinePrefix prefix, {
     Map<String, String>? environment,
   }) async {
-    final prefixParent = path.dirname(prefix.path);
-    final winePath = path.join(prefixParent, 'bin', 'wine64');
+    try {
+      // First check if DXVK is installed
+      if (!await _isDXVKInstalled(prefix)) {
+        onLog('DXVK not found, installing...');
+        await installDependencies(prefix, ['dxvk']);
+      }
 
-    if (!await File(winePath).exists()) {
-      throw Exception('Wine64 binary not found at: $winePath');
+      // Check for common dependencies
+      if (!await _hasCommonDependencies(prefix)) {
+        onLog('Installing common dependencies...');
+        await installDependencies(prefix, [
+          'vcrun2019',
+          'vcrun2017',
+          'd3dx9',
+          'xact',
+        ]);
+      }
+
+      final prefixParent = path.dirname(prefix.path);
+      final winePath = path.join(prefixParent, 'bin', 'wine64');
+
+      if (!await File(winePath).exists()) {
+        throw Exception('Wine64 binary not found at: $winePath');
+      }
+
+      if (!await File(exePath).exists()) {
+        throw Exception('Executable not found at: $exePath');
+      }
+
+      onLog('Using Wine at: $winePath');
+      onLog('Launching: $exePath');
+
+      final env = {
+        'WINEPREFIX': prefix.path,
+        'WINEARCH': 'win64',
+        'DXVK_ASYNC': '1',
+        'WINEESYNC': '1',
+        'WINEFSYNC': '1',
+        'WINE_LARGE_ADDRESS_AWARE': '1',
+        'STAGING_SHARED_MEMORY': '1',
+        'DXVK_STATE_CACHE': '1',
+        ...?environment,
+      };
+
+      final workingDir = path.dirname(exePath);
+
+      final process = await Process.start(
+        winePath,
+        [exePath],
+        environment: env,
+        workingDirectory: workingDir,
+        mode: ProcessStartMode.inheritStdio,
+      );
+
+      final exitCode = await process.exitCode;
+      if (exitCode != 0) {
+        throw Exception('Process exited with code $exitCode. This might indicate missing dependencies.');
+      }
+    } catch (e) {
+      onLog('Error launching game: $e');
+      rethrow;
     }
+  }
 
-    if (!await File(exePath).exists()) {
-      throw Exception('Executable not found at: $exePath');
+  Future<bool> _isDXVKInstalled(WinePrefix prefix) async {
+    final dxvkPath = path.join(prefix.path, 'drive_c', 'windows', 'system32', 'd3d11.dll');
+    return await File(dxvkPath).exists();
+  }
+
+  Future<bool> _hasCommonDependencies(WinePrefix prefix) async {
+    final system32 = path.join(prefix.path, 'drive_c', 'windows', 'system32');
+    final files = [
+      'msvcr120.dll',
+      'msvcp120.dll',
+      'd3dx9_43.dll',
+      'xactengine3_7.dll',
+    ];
+
+    for (final file in files) {
+      if (!await File(path.join(system32, file)).exists()) {
+        return false;
+      }
     }
-
-    onLog('Using Wine at: $winePath');
-    onLog('Launching: $exePath');
-
-    final env = {
-      'WINEPREFIX': prefix.path,
-      'WINEARCH': 'win64',
-      'DXVK_ASYNC': '1',
-      ...?environment,
-    };
-
-    final workingDir = path.dirname(exePath);
-
-    final process = await Process.start(
-      winePath,
-      [exePath],
-      environment: env,
-      workingDirectory: workingDir,
-      mode: ProcessStartMode.inheritStdio,
-    );
-
-    final exitCode = await process.exitCode;
-    if (exitCode != 0) {
-      throw Exception('Process exited with code $exitCode');
-    }
+    return true;
   }
 
   // Prefix management methods
@@ -322,7 +366,7 @@ class WineService {
       }
       return prefixes;
     } catch (e) {
-      onLog('Error loading prefixes: $e');
+      _logger.severe('Error loading prefixes: $e');
       return [];
     }
   }
@@ -330,7 +374,7 @@ class WineService {
   Future<List<WineBuild>> fetchAvailableBuilds() async {
     final builds = <WineBuild>[];
     
-    for (final category in AVAILABLE_VERSIONS.entries) {
+    for (final category in availableVersions.entries) {
       for (final version in category.value.entries) {
         builds.add(WineBuild(
           name: version.value,
@@ -356,7 +400,7 @@ class WineService {
   }
 
   void onLog(String message) {
-    print(message);
+    _logger.info(message);
     logCallback?.call(message);
   }
 
@@ -410,7 +454,7 @@ class WineService {
         await Directory(mountPoint).delete(recursive: true);
       }
     } catch (e) {
-      print('Error cleaning up squashfs mounts: $e');
+      _logger.severe('Error cleaning up squashfs mounts: $e');
       rethrow;
     }
   }
@@ -439,7 +483,7 @@ class WineService {
 
       return exeFiles;
     } catch (e) {
-      print('Error mounting squashfs game: $e');
+      _logger.severe('Error mounting squashfs game: $e');
       rethrow;
     }
   }
@@ -464,21 +508,204 @@ class WineService {
 
   // Add method to install dependencies
   Future<void> installDependencies(WinePrefix prefix, List<String> dependencies) async {
+    for (final dep in dependencies) {
+      if (dep == 'vkd3d-proton') {
+        await _installVkd3dProton(prefix);
+      } else {
+        // Regular winetricks installation
+        await _runWinetricks(prefix, [dep]);
+      }
+    }
+  }
+
+  Future<void> _installVkd3dProton(WinePrefix prefix) async {
+    final tempDir = await Directory.systemTemp.createTemp('vkd3d-proton');
+    try {
+      // Download latest VKD3D-Proton
+      final version = '2.11';
+      final url = 'https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v$version/vkd3d-proton-$version.tar.zst';
+      
+      _logger.info('Downloading VKD3D-Proton $version...');
+      final response = await http.get(Uri.parse(url));
+      final archivePath = path.join(tempDir.path, 'vkd3d-proton.tar.zst');
+      await File(archivePath).writeAsBytes(response.bodyBytes);
+
+      // First decompress zstd
+      _logger.info('Decompressing zstd archive...');
+      final tarPath = path.join(tempDir.path, 'vkd3d-proton.tar');
+      final decompressResult = await Process.run('zstd', ['-d', archivePath, '-o', tarPath]);
+      
+      if (decompressResult.exitCode != 0) {
+        throw Exception('Failed to decompress zstd: ${decompressResult.stderr}');
+      }
+
+      // Then extract tar
+      _logger.info('Extracting tar archive...');
+      final extractResult = await Process.run('tar', ['xf', tarPath], workingDirectory: tempDir.path);
+      
+      if (extractResult.exitCode != 0) {
+        throw Exception('Failed to extract tar: ${extractResult.stderr}');
+      }
+
+      // List contents to debug
+      final contents = await Process.run('ls', ['-la'], workingDirectory: tempDir.path);
+      _logger.info('Directory contents: ${contents.stdout}');
+
+      // Find the setup script
+      final setupScript = await _findFile(tempDir, 'setup_vkd3d_proton.sh');
+      if (setupScript == null) {
+        throw Exception('Could not find setup_vkd3d_proton.sh in extracted files');
+      }
+
+      _logger.info('Found setup script at: $setupScript');
+      await Process.run('chmod', ['+x', setupScript]);
+      
+      // Set up environment for VKD3D installation
+      final env = {
+        'WINEPREFIX': prefix.path,
+        'WINEARCH': 'win64',
+        'PATH': Platform.environment['PATH']!, // Include system PATH
+        'VKD3D_CONFIG': 'dxr',
+        'VKD3D_FEATURE_LEVEL': '12_1',
+        'VKD3D_SHADER_CACHE': '1',
+      };
+
+      // Add WINE path based on prefix type
+      if (prefix.isProton) {
+        env['WINE'] = prefix.protonPath;
+      } else {
+        env['WINE'] = path.join(path.dirname(prefix.path), 'bin', 'wine64');
+      }
+
+      // Run setup script with install argument
+      _logger.info('Running setup script...');
+      final result = await Process.run(setupScript, ['install'], 
+        environment: env,
+        workingDirectory: path.dirname(setupScript),
+      );
+
+      _logger.info('Setup script output: ${result.stdout}');
+      if (result.stderr.isNotEmpty) {
+        _logger.warning('Setup script errors: ${result.stderr}');
+      }
+
+      if (result.exitCode != 0) {
+        throw Exception('Failed to install VKD3D-Proton: ${result.stderr}');
+      }
+
+      // Enable DX12 in the registry
+      _logger.info('Configuring registry for DX12...');
+      final regFile = File(path.join(tempDir.path, 'dx12.reg'));
+      await regFile.writeAsString('''
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]
+"d3d12"="native"
+"d3d12core"="native"
+"vkd3d-proton"="native"
+
+[HKEY_LOCAL_MACHINE\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Setup\\DX12]
+"Available"=dword:00000001
+"FeatureLevel"=dword:0000c100
+''');
+
+      // Import registry file
+      if (prefix.isProton) {
+        await Process.run('python3', [
+          prefix.protonPath,
+          'run',
+          'regedit',
+          path.join(tempDir.path, 'dx12.reg'),
+        ], environment: {
+          'WINEPREFIX': prefix.path,
+          'STEAM_COMPAT_CLIENT_INSTALL_PATH': prefix.protonDir,
+          'STEAM_COMPAT_DATA_PATH': prefix.path,
+        });
+      } else {
+        // For regular Wine, use the wine64 binary directly
+        final wine64Path = path.join(path.dirname(prefix.path), 'bin', 'wine64');
+        await Process.run(wine64Path, [
+          'regedit',
+          path.join(tempDir.path, 'dx12.reg'),
+        ], environment: {
+          'WINEPREFIX': prefix.path,
+        });
+      }
+
+      _logger.info('VKD3D-Proton installation complete');
+    } catch (e, stack) {
+      _logger.severe('Error installing VKD3D-Proton: $e\n$stack');
+      rethrow;
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
+  }
+
+  Future<String?> _findFile(Directory dir, String filename) async {
+    try {
+      await for (final entity in dir.list(recursive: true)) {
+        if (entity is File && path.basename(entity.path) == filename) {
+          return entity.path;
+        }
+      }
+    } catch (e) {
+      _logger.warning('Error searching for file: $e');
+    }
+    return null;
+  }
+
+  Future<void> _runWinetricks(WinePrefix prefix, List<String> verbs) async {
     final winetricks = await _findWinetricks();
     
-    for (final dep in dependencies) {
-      onLog('Installing $dep...');
+    for (final verb in verbs) {
+      onLog('Installing $verb...');
       
-      // Use winetricks directly for vcrun installations
-      if (dep.startsWith('vcrun')) {
-        await _installWithWinetricks(prefix, dep, winetricks);
-      } else if (DEPENDENCY_URLS.containsKey(dep)) {
-        // Download and install specific version
-        await _installSpecificDependency(prefix, dep);
+      if (prefix.version.startsWith('GE-Proton')) {
+        // For Proton prefixes, we need to use Proton's wine command
+        final versionDir = path.dirname(prefix.path);
+        final geProtonDir = path.join(versionDir, prefix.version);
+        final protonPath = path.join(geProtonDir, 'proton');
+
+        final process = await Process.start(
+          'python3',
+          [protonPath, 'run', winetricks, '--unattended', verb],
+          environment: {
+            'STEAM_COMPAT_CLIENT_INSTALL_PATH': geProtonDir,
+            'STEAM_COMPAT_DATA_PATH': prefix.path,
+            'WINEPREFIX': prefix.path,
+            'WINEARCH': 'win64',
+            'WINETRICKS_LATEST_VERSION_CHECK': 'disabled',
+            'PROTON_NO_ESYNC': '1',  // Disable esync for installation
+            'PROTON_NO_FSYNC': '1',  // Disable fsync for installation
+          },
+          mode: ProcessStartMode.inheritStdio,
+        );
+
+        final exitCode = await process.exitCode;
+        if (exitCode != 0) {
+          throw Exception('Winetricks failed with exit code $exitCode');
+        }
       } else {
-        // Use winetricks for other dependencies
-        await _installWithWinetricks(prefix, dep, winetricks);
+        // Regular Wine prefix installation
+        final process = await Process.start(
+          'bash',
+          [winetricks, '--unattended', verb],
+          environment: {
+            'WINEPREFIX': prefix.path,
+            'WINEARCH': 'win64',
+            'WINETRICKS_LATEST_VERSION_CHECK': 'disabled',
+          },
+          mode: ProcessStartMode.inheritStdio,
+        );
+
+        final exitCode = await process.exitCode;
+        if (exitCode != 0) {
+          throw Exception('Winetricks failed with exit code $exitCode');
+        }
       }
+
+      // Add a small delay to ensure installation completes
+      await Future.delayed(const Duration(seconds: 2));
     }
   }
 
@@ -495,18 +722,17 @@ class WineService {
     final winetricksPath = path.join(await baseDir, 'winetricks');
     if (!await File(winetricksPath).exists()) {
       onLog('Downloading winetricks...');
-      final response = await HttpClient().getUrl(
+      final response = await http.get(
         Uri.parse('https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks'),
       );
-      final httpResponse = await response.close();
-      await httpResponse.pipe(File(winetricksPath).openWrite());
+      await File(winetricksPath).writeAsBytes(response.bodyBytes);
       await Process.run('chmod', ['+x', winetricksPath]);
     }
     return winetricksPath;
   }
 
   Future<void> _installSpecificDependency(WinePrefix prefix, String dep) async {
-    final url = DEPENDENCY_URLS[dep]!;
+    final url = dependencyUrls[dep]!;
     final fileName = path.basename(url);
     final downloadPath = path.join(await baseDir, 'downloads', fileName);
 
@@ -534,64 +760,13 @@ class WineService {
     await File(downloadPath).delete();
   }
 
-  Future<void> _installWithWinetricks(WinePrefix prefix, String verb, String winetricksPath) async {
-    onLog('Running winetricks $verb...');
-    
-    if (prefix.version.startsWith('GE-Proton')) {
-      // For Proton prefixes, we need to use Proton's wine command
-      final versionDir = path.dirname(prefix.path);
-      final geProtonDir = path.join(versionDir, prefix.version);
-      final protonPath = path.join(geProtonDir, 'proton');
-
-      final process = await Process.start(
-        'python3',
-        [protonPath, 'run', winetricksPath, '--unattended', verb],
-        environment: {
-          'STEAM_COMPAT_CLIENT_INSTALL_PATH': geProtonDir,
-          'STEAM_COMPAT_DATA_PATH': prefix.path,
-          'WINEPREFIX': prefix.path,
-          'WINEARCH': 'win64',
-          'WINETRICKS_LATEST_VERSION_CHECK': 'disabled',
-          'PROTON_NO_ESYNC': '1',  // Disable esync for installation
-          'PROTON_NO_FSYNC': '1',  // Disable fsync for installation
-        },
-        mode: ProcessStartMode.inheritStdio,
-      );
-
-      final exitCode = await process.exitCode;
-      if (exitCode != 0) {
-        throw Exception('Winetricks failed with exit code $exitCode');
-      }
-    } else {
-      // Regular Wine prefix installation
-      final process = await Process.start(
-        'bash',
-        [winetricksPath, '--unattended', verb],
-        environment: {
-          'WINEPREFIX': prefix.path,
-          'WINEARCH': 'win64',
-          'WINETRICKS_LATEST_VERSION_CHECK': 'disabled',
-        },
-        mode: ProcessStartMode.inheritStdio,
-      );
-
-      final exitCode = await process.exitCode;
-      if (exitCode != 0) {
-        throw Exception('Winetricks failed with exit code $exitCode');
-      }
-    }
-
-    // Add a small delay to ensure installation completes
-    await Future.delayed(const Duration(seconds: 2));
-  }
-
   Future<void> _extractAndInstallDirectX(String downloadPath, WinePrefix prefix) async {
     // Create temp directory for extraction
     final extractDir = path.join(await baseDir, 'tmp', 'directx');
     await Directory(extractDir).create(recursive: true);
 
     // Extract DirectX
-    await Process.run('7z', ['x', downloadPath, '-o${extractDir}']);
+    await Process.run('7z', ['x', downloadPath, '-o$extractDir']);
 
     // Run DXSETUP.exe
     await _launchWithWine(
@@ -678,6 +853,51 @@ class WineService {
       );
 
       await process.exitCode;
+    }
+  }
+
+  /// Installs essential dependencies for a new prefix
+  Future<void> installEssentialDependencies(WinePrefix prefix) async {
+    _logger.info('Installing essential dependencies for prefix: ${prefix.path}');
+
+    final dependencies = [
+      // Visual C++ Runtimes (newest to oldest)
+      'vcrun2022',
+      'vcrun2019',
+      'vcrun2017',
+      'vcrun2015',
+      
+      // DirectX Components
+      'dxvk',       // DX9/10/11 to Vulkan
+      'vkd3d-proton', // DX12 to Vulkan
+      'd3dx9',     // DirectX 9
+      'd3dx11',    // DirectX 11
+      
+      // Additional essentials
+      'xact',      // Audio
+      'faudio',    // Audio
+    ];
+
+    try {
+      for (final dep in dependencies) {
+        _logger.info('Installing $dep...');
+        try {
+          if (dep == 'vkd3d-proton') {
+            await _installVkd3dProton(prefix);
+          } else {
+            await _runWinetricks(prefix, [dep]);
+          }
+          _logger.info('Successfully installed $dep');
+        } catch (e) {
+          _logger.warning('Failed to install $dep: $e');
+          // Continue with other dependencies even if one fails
+        }
+        // Add a small delay between installations
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    } catch (e) {
+      _logger.severe('Error installing essential dependencies: $e');
+      rethrow;
     }
   }
 } 

@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import '../widgets/squashed_games_widget.dart';
-import '../widgets/regular_games_widget.dart';
-import 'dart:io';
-import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../models/game_folder.dart';
+import '../widgets/game_manager_widget.dart';
 
 class GamesScreen extends StatefulWidget {
   const GamesScreen({super.key});
@@ -67,8 +64,14 @@ class _GamesScreenState extends State<GamesScreen> {
             ? const Center(child: CircularProgressIndicator())
             : TabBarView(
                 children: [
-                  RegularGamesWidget(gameFolders: _normalPaths),
-                  SquashedGamesWidget(squashPaths: _squashedPaths),
+                  GameManagerWidget(
+                    gamePaths: _normalPaths,
+                    isSquashFS: false,
+                  ),
+                  GameManagerWidget(
+                    gamePaths: _squashedPaths,
+                    isSquashFS: true,
+                  ),
                 ],
               ),
       ),
