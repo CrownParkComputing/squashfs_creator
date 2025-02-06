@@ -1,25 +1,29 @@
 class GamePrefixAssociation {
-  final String path; // Path to the squashfs file
-  final String? exePath; // Path to the exe inside squashfs
-  final String? prefixPath; // Path to the wine prefix
+  final String path;
+  final String prefixPath;
+  final String prefixVersion;
+  final String prefixName;
 
   GamePrefixAssociation({
     required this.path,
-    this.exePath,
-    this.prefixPath,
+    required this.prefixPath,
+    required this.prefixVersion,
+    required this.prefixName,
   });
 
   Map<String, dynamic> toJson() => {
     'path': path,
-    'exePath': exePath,
     'prefixPath': prefixPath,
+    'prefixVersion': prefixVersion,
+    'prefixName': prefixName,
   };
 
   factory GamePrefixAssociation.fromJson(Map<String, dynamic> json) {
     return GamePrefixAssociation(
       path: json['path'],
-      exePath: json['exePath'],
       prefixPath: json['prefixPath'],
+      prefixVersion: json['prefixVersion'],
+      prefixName: json['prefixName'],
     );
   }
 } 

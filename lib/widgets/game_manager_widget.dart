@@ -297,4 +297,16 @@ class _GameManagerWidgetState extends State<GameManagerWidget> {
       }
     }
   }
+
+  Future<WinePrefix?> _selectPrefix() async {
+    final prefixes = await _wineService.loadPrefixes();
+    if (!mounted) return null;
+
+    return showDialog<WinePrefix>(
+      context: context,
+      builder: (context) => PrefixSelectorDialog(
+        availablePrefixes: prefixes,
+      ),
+    );
+  }
 } 

@@ -1,12 +1,14 @@
 class WinePrefix {
   final String path;
   final String version;
+  final String name;
   final DateTime created;
   final bool is64Bit;
 
   WinePrefix({
     required this.path,
     required this.version,
+    required this.name,
     required this.created,
     required this.is64Bit,
   });
@@ -33,14 +35,16 @@ class WinePrefix {
     return WinePrefix(
       path: json['path'],
       version: json['version'],
+      name: json['name'],
       created: DateTime.parse(json['created']),
-      is64Bit: json['is64Bit'] ?? true,  // Default to 64-bit
+      is64Bit: json['is64Bit'] ?? true,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'path': path,
     'version': version,
+    'name': name,
     'created': created.toIso8601String(),
     'is64Bit': is64Bit,
   };

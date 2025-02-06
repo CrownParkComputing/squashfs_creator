@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:logging/logging.dart';
-import 'package:wine_app/widgets/dll_override_manager.dart';
+import '../widgets/dll_override_manager.dart';
 // Make sure this is correct
 
 class WineScreen extends StatefulWidget {
@@ -17,6 +17,7 @@ class WineScreen extends StatefulWidget {
 
 class _WineScreenState extends State<WineScreen> {
   final WineService _wineService = WineService();
+  final _logger = Logger('WineScreen');
   List<WinePrefix> _prefixes = [];
   bool _isLoading = true;
 
@@ -105,57 +106,37 @@ class _WineScreenState extends State<WineScreen> {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert),
       tooltip: 'More Actions',
-      itemBuilder: (context) => [
-        const PopupMenuItem(
-          value: 'run',
-          child: ListTile(
-            leading: Icon(Icons.play_arrow),
-            title: Text('Run Executable'),
-            subtitle: Text('Run .exe, .bat, or .msi file'),
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'winecfg',
-          child: ListTile(
-            leading: Icon(Icons.settings),
-            title: Text('Wine Configuration'),
-            subtitle: Text('Configure wine settings'),
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'components',
-          child: ListTile(
-            leading: Icon(Icons.build),
-            title: Text('Install Components'),
-            subtitle: Text('Install Visual C++, DirectX, etc'),
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'delete',
-          child: ListTile(
-            leading: Icon(Icons.delete, color: Colors.red),
-            title: Text('Delete Prefix'),
-            subtitle: Text('Remove this prefix'),
-          ),
-        ),
-      ],
       onSelected: (value) async {
         switch (value) {
           case 'run':
             await _runExecutable(prefix);
-            break;
           case 'winecfg':
             await _wineService.launchWinecfg(prefix);
-            break;
-          case 'components':
+          case 'dll_overrides':
+            if (mounted) {
+              await showDialog(
+                context: context,
+                builder: (context) => Dialog(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: SizedBox(
+                      width: 600,
+                      child: DllOverrideManager(prefix: prefix),
+                    ),
+                  ),
+                ),
+              );
+            }
+          case 'winetricks':
+            await _showWinetricksDialog(prefix);
+          case 'install_component':
             await _showComponentsDialog(prefix);
-            break;
           case 'delete':
             final confirm = await showDialog<bool>(
               context: context,
               builder: (context) => AlertDialog(
                 title: const Text('Delete Prefix'),
-                content: Text('Delete ${prefix.version}?'),
+                content: Text('Delete prefix "${prefix.name}"?\nThis cannot be undone.'),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -163,18 +144,77 @@ class _WineScreenState extends State<WineScreen> {
                   ),
                   TextButton(
                     onPressed: () => Navigator.pop(context, true),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.red,
+                    ),
                     child: const Text('Delete'),
                   ),
                 ],
               ),
             );
+
             if (confirm == true) {
-              await Directory(prefix.path).delete(recursive: true);
-              await _loadPrefixes();
+              setState(() => _isLoading = true);
+              try {
+                // Get the parent directory (version/prefix_name)
+                final prefixDir = Directory(path.dirname(prefix.path));
+                await prefixDir.delete(recursive: true);
+                await _loadPrefixes();
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Prefix "${prefix.name}" deleted'),
+                      backgroundColor: Colors.blue,
+                    ),
+                  );
+                }
+              } catch (e) {
+                _logger.severe('Error deleting prefix: $e');
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error deleting prefix: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } finally {
+                setState(() => _isLoading = false);
+              }
             }
-            break;
         }
       },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'run',
+          child: Text('Run Executable'),
+        ),
+        const PopupMenuItem(
+          value: 'winecfg',
+          child: Text('Wine Configuration'),
+        ),
+        const PopupMenuItem(
+          value: 'dll_overrides',
+          child: Text('DLL Overrides'),
+        ),
+        const PopupMenuItem(
+          value: 'winetricks',
+          child: Text('Run Winetricks'),
+        ),
+        const PopupMenuItem(
+          value: 'install_component',
+          child: Text('Install Component'),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'delete',
+          child: const Text(
+            'Delete Prefix',
+            style: TextStyle(color: Colors.red),
+          ),
+        ),
+      ],
     );
   }
 
@@ -209,40 +249,6 @@ class _WineScreenState extends State<WineScreen> {
           ),
           const Divider(),
           
-          // Graphics Section
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text('Graphics', 
-              style: TextStyle(fontWeight: FontWeight.bold)
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'dxvk'),
-            child: const Text('DXVK (Vulkan for DX9/10/11)'),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'vkd3d-proton'),
-            child: const Text('VKD3D-Proton (Vulkan for DX12)'),
-          ),
-          const Divider(),
-          
-          // DirectX Section
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text('DirectX', 
-              style: TextStyle(fontWeight: FontWeight.bold)
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'd3dx9'),
-            child: const Text('DirectX 9'),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'd3dx11'),
-            child: const Text('DirectX 11'),
-          ),
-          const Divider(),
-          
           // Other Components Section
           const Padding(
             padding: EdgeInsets.all(16.0),
@@ -251,16 +257,12 @@ class _WineScreenState extends State<WineScreen> {
             ),
           ),
           SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'xact'),
-            child: const Text('XACT (Audio)'),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'xinput'),
-            child: const Text('XInput (Controllers)'),
-          ),
-          SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'dotnet48'),
             child: const Text('.NET Framework 4.8'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'xact'),
+            child: const Text('XACT (Audio)'),
           ),
         ],
       ),
@@ -269,11 +271,7 @@ class _WineScreenState extends State<WineScreen> {
     if (result != null) {
       final category = switch (result) {
         String v when v.startsWith('vcrun') => 'Visual C++',
-        String v when v.startsWith('d3d') => 'DirectX',
-        'dxvk' => 'DXVK',
-        'vkd3d-proton' => 'VKD3D-Proton',
         'xact' => 'XACT',
-        'xinput' => 'XInput',
         String v when v.startsWith('dotnet') => '.NET Framework',
         _ => 'Component',
       };
@@ -281,25 +279,97 @@ class _WineScreenState extends State<WineScreen> {
     }
   }
 
+  Future<void> _showWinetricksDialog(WinePrefix prefix) async {
+    final controller = TextEditingController();
+    final verb = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Run Winetricks'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Winetricks Verb',
+                hintText: 'e.g., dotnet48, d3dx9, etc',
+              ),
+              onSubmitted: (value) => Navigator.pop(context, value),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Common verbs:\n'
+              '• dotnet48 - .NET Framework 4.8\n'
+              '• vcrun2022 - Visual C++ 2022\n'
+              '• d3dx9 - DirectX 9\n'
+              '• xact - XACT Audio\n'
+              '• corefonts - Microsoft Fonts',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Run'),
+          ),
+        ],
+      ),
+    );
+
+    if (verb == null || verb.isEmpty) {
+      controller.dispose();
+      return;
+    }
+    controller.dispose();
+
+    try {
+      setState(() => _isLoading = true);
+      await _wineService.installDependencies(prefix, [verb]);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Successfully ran winetricks $verb'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      _logger.severe('Error running winetricks: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error running winetricks: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _downloadAndSetupPrefix() async {
+    // First, get the Proton version
     final version = await showDialog<String>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('Select Wine Version'),
+        title: const Text('Select Proton Version'),
         children: [
-          for (final category in WineService.availableVersions.entries)
-            ExpansionTile(
-              title: Text(category.key),
-              children: [
-                for (final version in category.value.entries)
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, version.key),
-                    child: ListTile(
-                      title: Text(version.key),
-                      subtitle: Text(version.value),
-                    ),
-                  ),
-              ],
+          for (final version in WineService.availableVersions['GE-Proton']!.entries)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, version.key),
+              child: ListTile(
+                title: Text(version.key),
+                subtitle: Text('Latest GE-Proton release'),
+              ),
             ),
         ],
       ),
@@ -307,21 +377,53 @@ class _WineScreenState extends State<WineScreen> {
 
     if (version == null) return;
 
-    setState(() => _isLoading = true);
+    // Then get the prefix name
+    final controller = TextEditingController();
+    final prefixName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create Prefix'),
+        content: TextField(
+          autofocus: true,
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Prefix Name',
+            hintText: 'e.g., gaming, dx12, etc',
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
 
+    if (prefixName == null || prefixName.isEmpty) {
+      controller.dispose();
+      return;
+    }
+    controller.dispose();
+
+    setState(() => _isLoading = true);
     try {
-      await _wineService.downloadAndSetupPrefix(version);
+      await _wineService.downloadAndSetupPrefix(version, prefixName);
+      await _loadPrefixes();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Successfully created prefix for $version'),
+            content: Text('Prefix "$prefixName" created successfully'),
             backgroundColor: Colors.green,
           ),
         );
       }
-      
-      await _loadPrefixes();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -5,11 +5,19 @@ A Flutter application for managing Windows games on Linux using GE-Proton.
 ## Features
 
 - Create and manage GE-Proton prefixes
-- Automatic installation of essential dependencies
+- Built-in support for:
+  - DXVK (Vulkan for DX9/10/11)
+  - VKD3D-Proton (Vulkan for DX12)
+  - FSR (AMD FidelityFX Super Resolution)
+  - Gamepad support
+  - Various performance optimizations
+- Additional component installation:
+  - Visual C++ Runtimes (2015-2022)
+  - .NET Framework
+  - XACT (for games with special audio requirements)
 - DLL Override Management
   - Set native/builtin overrides for specific DLLs
   - View and manage current overrides
-  - Common override presets (native, builtin, native then builtin, etc.)
 - Easy game launching with optimized settings
 - Squashfs game mounting support
 

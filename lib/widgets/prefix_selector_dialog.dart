@@ -6,12 +6,13 @@ import '../services/squash_manager.dart';
 import 'package:path/path.dart' as path;
 import 'package:logging/logging.dart';
 import 'dart:io';
+import 'package:intl/intl.dart';
 
 class PrefixSelectorDialog extends StatefulWidget {
-  final List<WinePrefix>? availablePrefixes;  // Optional - will load if not provided
+  final List<WinePrefix>? availablePrefixes;
   final WinePrefix? currentPrefix;
-  final String? gamePath;  // Optional - for game configuration
-  final GameConfig? existingConfig;  // Optional - for editing existing config
+  final String? gamePath;
+  final GameConfig? existingConfig;
 
   const PrefixSelectorDialog({
     super.key,
@@ -236,12 +237,15 @@ class _PrefixSelectorDialogState extends State<PrefixSelectorDialog> {
             if (_isLoading)
               const CircularProgressIndicator()
             else
-              ..._prefixes.map((prefix) => RadioListTile<WinePrefix>(
-                title: Text(path.basename(prefix.path)),
-                subtitle: Text('${prefix.version} (${prefix.is64Bit ? "64-bit" : "32-bit"})'),
-                value: prefix,
-                groupValue: selectedPrefix,
-                onChanged: (value) => setState(() => selectedPrefix = value),
+              ..._prefixes.map((prefix) => SimpleDialogOption(
+                onPressed: () => setState(() => selectedPrefix = prefix),
+                child: ListTile(
+                  title: Text(path.basename(prefix.path)),
+                  subtitle: Text('${prefix.version} (${prefix.is64Bit ? "64-bit" : "32-bit"})'),
+                  trailing: Text(
+                    DateFormat('yyyy-MM-dd').format(prefix.created),
+                  ),
+                ),
               )),
             if (widget.gamePath != null) ...[
               const SizedBox(height: 16),

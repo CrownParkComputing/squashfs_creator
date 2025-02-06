@@ -41,7 +41,7 @@ class WineService {
   }
 
   // Download and setup methods
-  Future<void> downloadAndSetupPrefix(String version) async {
+  Future<void> downloadAndSetupPrefix(String version, String prefixName) async {
     try {
       onLog('Starting download of $version...');
       
@@ -51,12 +51,18 @@ class WineService {
       }
 
       final downloadPath = path.join(downloadDir.path, version);
-      final prefixDir = Directory(path.join(await baseDir, version));
+      final prefixDir = Directory(path.join(await baseDir, version, prefixName));
       
+      // Check if prefix already exists
+      if (await prefixDir.exists()) {
+        throw Exception('Prefix "$prefixName" already exists');
+      }
+
       // Get download URL based on version
       final url = _getDownloadUrl(version);
       
-      // Download the file
+      // Download and extract Proton
+      onLog('Downloading Proton...');
       final response = await HttpClient().getUrl(Uri.parse(url));
       final httpResponse = await response.close();
       
@@ -64,31 +70,27 @@ class WineService {
         throw Exception('Failed to download: ${httpResponse.statusCode}');
       }
 
-      // Save to file
       final file = File(downloadPath);
       await httpResponse.pipe(file.openWrite());
 
       // Extract and setup
-      await _extractAndSetupPrefix(downloadPath, version);
+      await _extractAndSetupPrefix(downloadPath, version, prefixName);
       
       // Cleanup download
       await file.delete();
 
       onLog('Prefix setup complete!');
 
-      // Create WinePrefix object with the correct path
+      // Create WinePrefix object
       final prefix = WinePrefix(
         path: path.join(prefixDir.path, 'pfx'),
         version: version,
+        name: prefixName,
         created: DateTime.now(),
         is64Bit: true,
       );
 
-      // Install essential dependencies
-      onLog('Installing essential dependencies...');
-      await installEssentialDependencies(prefix);
-      
-      onLog('Prefix setup and dependencies installation complete!');
+      onLog('Prefix setup and initialization complete!');
 
     } catch (e) {
       onLog('Error during setup: $e');
@@ -101,9 +103,9 @@ class WineService {
     return 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$version/$version.tar.gz';
   }
 
-  Future<void> _extractAndSetupPrefix(String archivePath, String version) async {
+  Future<void> _extractAndSetupPrefix(String archivePath, String version, String prefixName) async {
     try {
-      final prefixDir = Directory(path.join(await baseDir, version));
+      final prefixDir = Directory(path.join(await baseDir, version, prefixName));
       
       // Clean up existing prefix if it exists
       if (await prefixDir.exists()) {
@@ -343,31 +345,101 @@ class WineService {
 
   // Prefix management methods
   Future<List<WinePrefix>> loadPrefixes() async {
-    try {
-      final dir = Directory(await baseDir);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-        return [];
-      }
+    final prefixes = <WinePrefix>[];
+    final baseDirectory = Directory(await baseDir);
+    
+    if (!await baseDirectory.exists()) {
+      return prefixes;
+    }
 
-      final prefixes = <WinePrefix>[];
-      await for (final entity in dir.list()) {
-        if (entity is Directory) {
-          final pfxPath = path.join(entity.path, 'pfx');
-          if (await Directory(pfxPath).exists()) {
-            prefixes.add(WinePrefix(
+    try {
+      await for (final versionDir in baseDirectory.list()) {
+        if (versionDir is! Directory) continue;
+        final version = path.basename(versionDir.path);
+        
+        // Skip non-Proton directories
+        if (!version.startsWith('GE-Proton')) continue;
+
+        await for (final prefixDir in versionDir.list()) {
+          if (prefixDir is! Directory) continue;
+          final prefixName = path.basename(prefixDir.path);
+          final pfxPath = path.join(prefixDir.path, 'pfx');
+          
+          if (!await Directory(pfxPath).exists()) continue;
+
+          try {
+            final prefix = WinePrefix(
               path: pfxPath,
-              version: path.basename(entity.path),
-              created: (await entity.stat()).modified,
+              version: version,
+              name: prefixName,
+              created: (await Directory(pfxPath).stat()).changed,
               is64Bit: true,
-            ));
+            );
+            prefixes.add(prefix);
+          } catch (e) {
+            _logger.warning('Error loading prefix at $pfxPath: $e');
           }
         }
       }
-      return prefixes;
     } catch (e) {
       _logger.severe('Error loading prefixes: $e');
-      return [];
+    }
+
+    return prefixes;
+  }
+
+  Future<WinePrefix?> getPrefixByPath(String prefixPath) async {
+    try {
+      final dir = Directory(prefixPath);
+      if (!await dir.exists()) return null;
+
+      // Parse the path to get version and name
+      final parts = path.split(prefixPath);
+      final versionIndex = parts.indexWhere((p) => p.startsWith('GE-Proton'));
+      if (versionIndex == -1) return null;
+
+      final version = parts[versionIndex];
+      final prefixName = parts[versionIndex + 1];
+
+      // Create the prefix object
+      return WinePrefix(
+        path: prefixPath,
+        version: version,
+        name: prefixName,
+        created: (await dir.stat()).changed,
+        is64Bit: true,
+      );
+    } catch (e) {
+      _logger.warning('Error getting prefix by path: $e');
+      return null;
+    }
+  }
+
+  Future<WinePrefix?> _getOrCreatePrefix(String prefixPath) async {
+    try {
+      // Try to get existing prefix
+      final prefix = await getPrefixByPath(prefixPath);
+      if (prefix != null) return prefix;
+
+      // If not found, parse path to create new prefix
+      final parts = path.split(prefixPath);
+      final versionIndex = parts.indexWhere((p) => p.startsWith('GE-Proton'));
+      if (versionIndex == -1) throw Exception('Invalid prefix path');
+
+      final version = parts[versionIndex];
+      final prefixName = parts[versionIndex + 1];
+
+      // Create new prefix
+      return WinePrefix(
+        path: prefixPath,
+        version: version,
+        name: prefixName,
+        created: DateTime.now(),
+        is64Bit: true,
+      );
+    } catch (e) {
+      _logger.severe('Error getting/creating prefix: $e');
+      return null;
     }
   }
 
@@ -413,28 +485,29 @@ class WineService {
     return jsonList.map((json) => GamePrefixAssociation.fromJson(json)).toList();
   }
 
-  Future<void> saveGameAssociation(GamePrefixAssociation association) async {
+  Future<void> saveGameAssociation(String gamePath, WinePrefix prefix) async {
     final prefs = await SharedPreferences.getInstance();
     final associations = await loadGameAssociations();
     
-    // Remove any existing association for this game
-    associations.removeWhere((a) => a.path == association.path);
+    associations.add(GamePrefixAssociation(
+      path: gamePath,
+      prefixPath: prefix.path,
+      prefixVersion: prefix.version,
+      prefixName: prefix.name,
+    ));
     
-    // Add the new association
-    associations.add(association);
-    
-    // Save to storage
-    final jsonList = associations.map((a) => a.toJson()).toList();
-    await prefs.setString('game_associations', jsonEncode(jsonList));
+    await prefs.setString('game_associations', jsonEncode(associations.map((a) => a.toJson()).toList()));
   }
 
-  Future<GamePrefixAssociation?> getGameAssociation(String path) async {
+  Future<WinePrefix?> getAssociatedPrefix(String gamePath) async {
     final associations = await loadGameAssociations();
-    try {
-      return associations.firstWhere((a) => a.path == path);
-    } catch (e) {
-      return null;
-    }
+    final association = associations.firstWhere(
+      (a) => a.path == gamePath,
+      orElse: () => throw Exception('No prefix associated with game'),
+    );
+    
+    if (association.prefixPath == null) return null;
+    return getPrefixByPath(association.prefixPath);
   }
 
   Future<void> removeGameAssociation(String path) async {
@@ -493,15 +566,23 @@ class WineService {
       final dir = Directory(prefixPath);
       if (!await dir.exists()) return null;
 
+      final parts = path.split(prefixPath);
+      final versionIndex = parts.indexWhere((p) => p.startsWith('GE-Proton'));
+      if (versionIndex == -1) return null;
+
+      final version = parts[versionIndex];
+      final prefixName = parts[versionIndex + 1];
+
       final stat = await dir.stat();
       return WinePrefix(
         path: prefixPath,
-        version: path.basename(path.dirname(prefixPath)),
+        version: version,
+        name: prefixName,
         created: stat.modified,
         is64Bit: true,
       );
     } catch (e) {
-      onLog('Error loading prefix by path: $e');
+      _logger.warning('Error loading prefix by path: $e');
       return null;
     }
   }
@@ -858,6 +939,12 @@ Windows Registry Editor Version 5.00
 
   /// Installs essential dependencies for a new prefix
   Future<void> installEssentialDependencies(WinePrefix prefix) async {
+    // Skip for Proton prefixes as they already include all dependencies
+    if (prefix.isProton) {
+      _logger.info('Skipping dependency installation for Proton prefix: ${prefix.path}');
+      return;
+    }
+
     _logger.info('Installing essential dependencies for prefix: ${prefix.path}');
 
     final dependencies = [
